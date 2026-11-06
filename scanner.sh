@@ -3,7 +3,7 @@
 
 R='\033[31m'; G='\033[32m'; Y='\033[33m'; C='\033[36m'; M='\033[35m'; B='\033[1m'; N='\033[0m'
 ALERTAS=0
-UA="Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 NOMES_FILE="$HOME/.merllenss_nomes.txt"
 LOG_FILE="$HOME/merllenss_wo_log.txt"
 WORKDIR="$HOME/.merllenss_tmp"
@@ -239,26 +239,40 @@ analisar_arquivo() {
   fi
 
   passo "Buscando o link de download..."
+  DIRETO=""; HTML=""
   if [[ "$LINK" =~ ^https?://download[0-9]*\.mediafire\.com/ ]]; then
     DIRETO="$LINK"
   else
-    HTML=$(curl -sL -A "$UA" "$LINK")
+    HTML=$(curl -sL --compressed -A "$UA" -H "Accept-Language: en-US,en;q=0.9" "$LINK"); CURL_RC=$?
+    if [ -z "$HTML" ]; then
+      bad "Não consegui abrir a página (curl código $CURL_RC). Verifique a internet."
+    fi
     DIRETO=$(echo "$HTML" | grep -oE "https?://download[0-9]*\.mediafire\.com/[^\"'<> ]+" | head -n1)
     if [ -z "$DIRETO" ]; then
       ESC=$(echo "$HTML" | grep -oE 'data-scrambled-url="[^"]+"' | head -n1 | cut -d'"' -f2)
       [ -n "$ESC" ] && DIRETO=$(echo "$ESC" | base64 -d 2>/dev/null)
     fi
+    DIRETO=${DIRETO//&amp;/&}
   fi
   if [ -z "$DIRETO" ]; then
-    bad "Não achei o link direto. O arquivo pode ter sido removido ou o link é privado."
-    return
+    bad "Não achei o link direto automaticamente."
+    echo "  Tamanho da página recebida: ${#HTML} caracteres"
+    echo "$HTML" | grep -qiE "captcha|cloudflare|just a moment" && echo "  O MediaFire pediu verificação anti-robô."
+    echo
+    echo "Alternativa: abra o link no navegador, segure o botão Download,"
+    echo "copie o endereço do link (download....mediafire.com) e cole aqui."
+    read -rp "Link direto (ENTER cancela): " DIRETO
+    DIRETO=$(echo "$DIRETO" | tr -d ' \r\n')
+    [ -z "$DIRETO" ] && return
   fi
   ok "Link direto encontrado"
 
   passo "Baixando..."
   rm -rf "$WORKDIR"; mkdir -p "$WORKDIR/ext"
-  if ! curl -fL --progress-bar -A "$UA" -o "$WORKDIR/arquivo" "$DIRETO"; then
-    bad "Falha no download."
+  curl -fL --progress-bar -A "$UA" -e "https://www.mediafire.com/" -o "$WORKDIR/arquivo" "$DIRETO"
+  RC=$?
+  if [ "$RC" -ne 0 ]; then
+    bad "Falha no download (curl código $RC)."
     rm -rf "$WORKDIR"; return
   fi
   if head -c 300 "$WORKDIR/arquivo" | grep -qi "<html"; then
